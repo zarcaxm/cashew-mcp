@@ -1,10 +1,12 @@
 # cashew-mcp
 
-A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that connects to your local [Cashew](https://github.com/jameskokoska/Cashew) budget app database and lets you query your finances directly from Claude.
+A [Model Context Protocol (MCP)](https://modelcontextprotocol.io) server that connects to your local [Cashew](https://github.com/jameskokoska/Cashew) budget app database and lets you query your finances directly from an MCP client such as Claude Code or Codex.
 
 > Cashew is a free, open-source budgeting app. This MCP server works with the SQLite export from the app.
 
 > **Note:** The MCP server reads from a local SQLite file — it does not sync live with the app. To query your latest transactions and balances, export a fresh backup from Cashew (**Settings → Export Data → Export as SQLite database**) before each session.
+
+This fork is focused on a better MCP personal-finance experience: spendable cash, budget-aware reports, upcoming expenses, and month-end decision support.
 
 ---
 
@@ -17,6 +19,9 @@ Ask Claude things like:
 - "Am I over budget?"
 - "Search for Swiggy transactions"
 - "What's my current bank balance?"
+- "How much money do I have available to spend?"
+- "Show spending by budget, excluding Unaccounted"
+- "Which upcoming expenses will hit before salary day?"
 
 Or just type `/cashew` for a full financial dashboard.
 
@@ -83,8 +88,11 @@ Type `/cashew` in Claude Code. You should see a dashboard with your balances, bu
 |------|-------------|
 | `get_transactions` | Fetch transactions with filters: date range, category, wallet, type |
 | `get_spending_by_category` | Total spending grouped by category for any period |
-| `get_budgets` | Budget list with amount spent, remaining, and % used |
+| `get_spending_by_budget` | Total spending grouped by Cashew budget using transaction budget links |
+| `get_budgets` | Budget list with linked spend, remaining, and % used |
 | `get_wallet_balances` | Current balance, total income, and total expenses per account |
+| `get_available_cash` | Spendable cash across selected wallets, optionally net of upcoming expenses |
+| `get_upcoming_transactions` | Unpaid future transactions for cash-flow forecasting |
 | `search_transactions` | Full-text search across transaction names and notes |
 | `get_monthly_summary` | Month-by-month income vs expenses |
 

@@ -22,33 +22,32 @@ Turn a static Cashew SQLite export into a reliable financial decision layer:
 - `get_available_cash` for day-to-day spendable cash across selected wallets.
 - `get_spending_by_budget` using Cashew's `shared_reference_budget_pk` transaction link.
 - `get_budgets` now calculates spend from transactions actually linked to each budget.
+- `forecast_cashflow` for projecting available cash on a future date with optional salary and variable-spend estimates.
+- `get_subscriptions` for upcoming recurring payments, likely subscriptions, and stale recurring entries.
+- `audit_data_quality` for stale unpaid, unnamed, unbudgeted, correction, and uncategorised transactions.
+- `get_month_status` for an executive monthly view with income, expenses, net, and budget/category totals.
+- Config profiles through environment variables for spendable wallets, reserve wallets, correction categories, and ignored budgets.
 
 ## High-Value Next Improvements
 
-1. **Cash-flow forecast tool**
-   - Inputs: date, expected salary amount/date, selected wallets, excluded budgets.
-   - Output: projected available cash with scenarios.
-
-2. **Budget period resolver**
+1. **Budget period resolver**
    - Current Cashew budgets store recurrence metadata.
    - The server should infer the active period for monthly/weekly budgets instead of only using stored start/end dates.
 
-3. **Subscription detector**
-   - Detect recurring subscriptions from paid and upcoming transactions.
-   - Flag stale future transactions and likely cancelled subscriptions.
-
-4. **Data-quality audit**
-   - Find uncategorised transactions, unbudgeted transactions, old unpaid transactions, empty names, and corrections included in spending.
-
-5. **Portuguese finance prompts**
+2. **Portuguese finance prompts**
    - Add Codex/ChatGPT-friendly prompt templates for the user's routine:
      weekly check, month-end close, purchase decision, travel budget, and subscription review.
 
-6. **Config profiles**
-   - Let users define spendable wallets, reserve wallets, ignored budgets, and correction categories in an env/config file.
-
-7. **Tests with fixture database**
+3. **Tests with fixture database**
    - Add a tiny SQLite fixture and tests for budget grouping, available cash, monthly summaries, and upcoming expenses.
+
+4. **Forecast scenarios**
+   - Add optimistic/base/conservative spend assumptions.
+   - Recommend a daily allowance until the target date.
+
+5. **Subscription confidence scoring**
+   - Score recurring detections by cadence consistency and amount variance.
+   - Distinguish confirmed upcoming recurring transactions from inferred subscriptions.
 
 ## Useful Queries To Support Well
 

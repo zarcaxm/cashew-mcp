@@ -22,6 +22,9 @@ Ask Claude things like:
 - "How much money do I have available to spend?"
 - "Show spending by budget, excluding Unaccounted"
 - "Which upcoming expenses will hit before salary day?"
+- "How much money should I have available on salary day?"
+- "Which subscriptions look active?"
+- "Audit my Cashew data quality for this month"
 
 Or just type `/cashew` for a full financial dashboard.
 
@@ -95,6 +98,10 @@ Type `/cashew` in Claude Code. You should see a dashboard with your balances, bu
 | `get_upcoming_transactions` | Unpaid future transactions for cash-flow forecasting |
 | `search_transactions` | Full-text search across transaction names and notes |
 | `get_monthly_summary` | Month-by-month income vs expenses |
+| `forecast_cashflow` | Project available cash on a target date using selected wallets, upcoming transactions, optional salary, and optional variable-spend estimate |
+| `get_subscriptions` | Detect upcoming recurring payments, likely subscriptions from history, and stale unpaid recurring entries |
+| `audit_data_quality` | Find stale unpaid entries, missing names, unbudgeted spending, correction entries, and uncategorised transactions |
+| `get_month_status` | Executive monthly status: income, expenses, net, budget totals, category totals, and net excluding selected budgets |
 
 ---
 
@@ -113,6 +120,17 @@ Or export it in your shell before launching Claude Code:
 export CASHEW_DB=/custom/path/to/cashew.sqlite
 ```
 
+You can also tune the default finance profile used by the decision-support tools:
+
+```bash
+export CASHEW_SPENDABLE_WALLETS=Checkings,Banco
+export CASHEW_RESERVE_WALLETS="Savings,Emergency Fund,Savings-Rev,Credit Card,Owing"
+export CASHEW_CORRECTION_CATEGORIES="Balance Correction,Transferencia"
+export CASHEW_IGNORED_BUDGETS=Unaccounted
+```
+
+These defaults control what counts as day-to-day cash, what is treated as reserve or owed money, which categories are excluded from clean spending reports, and which budgets are ignored in "available money" style summaries.
+
 ---
 
 ## Using the `/cashew` command
@@ -123,6 +141,9 @@ export CASHEW_DB=/custom/path/to/cashew.sqlite
 | `/cashew how much did I spend on food this month?` | Answers the specific question |
 | `/cashew search swiggy` | Searches transactions by name |
 | `/cashew show monthly summary for 2025` | Year overview |
+| `/cashew forecast cash on 2026-09-27 with salary 1484` | Cash-flow projection to a target date |
+| `/cashew subscriptions` | Recurring payments and likely subscriptions |
+| `/cashew audit this month` | Data-quality checks for the active month |
 
 ---
 

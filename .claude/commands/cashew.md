@@ -19,6 +19,10 @@ When this command is invoked:
 | `get_upcoming_transactions` | Future unpaid transactions for forecasting |
 | `search_transactions` | Finding transactions by name or note |
 | `get_monthly_summary` | Month-over-month income vs expenses |
+| `forecast_cashflow` | Projecting available cash on a future date |
+| `get_subscriptions` | Reviewing subscriptions and recurring payments |
+| `audit_data_quality` | Finding stale unpaid, unbudgeted, unnamed, or uncategorised entries |
+| `get_month_status` | Monthly executive summary with income, expenses, net, and budget/category totals |
 
 ## Formatting rules
 - Show amounts with the correct currency symbol (€ for EUR, ₹ for INR, $ for USD, ฿ for THB, ﷼ for OMR)
@@ -26,12 +30,18 @@ When this command is invoked:
 - Use tables for multi-row results
 - Highlight any budget that is over 80% utilised
 - Treat reserve/owed wallets separately from spendable cash unless the user explicitly asks for total net worth
+- Prefer `forecast_cashflow` for "how much will I have on date X" questions
+- Prefer `get_month_status` when the user asks what is available this month after excluding ignored budgets
+- Mention that results depend on the freshness of the exported Cashew backup when making forecasts
 
 ## Example queries this command handles
 - "How much have I spent this month?"
 - "How much money is available in Checkings and Banco?"
 - "Show spending by budget excluding Unaccounted"
 - "What expenses are upcoming before salary day?"
+- "How much money will be available on the 27th?"
+- "Which subscriptions are active?"
+- "Audit this month's Cashew data"
 - "Show my top 5 spending categories in 2025"
 - "Search for Zomato transactions"
 - "What's my current balance?"

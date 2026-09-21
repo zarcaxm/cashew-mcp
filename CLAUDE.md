@@ -4,9 +4,11 @@ This project is an MCP server for the Cashew budget app. It exposes read-only SQ
 
 ## What this project is
 
-`cashew_mcp.py` — single-file MCP server using `mcp[cli]` via FastMCP.  
-`pyproject.toml` — declares the `cashew-mcp` entry point for `uv run`.  
+`src/cashew_mcp/server.py` — MCP server using `mcp[cli]` via FastMCP.
+`src/cashew_mcp/__init__.py` — public exports for direct imports and tests.
+`pyproject.toml` — declares the `cashew-mcp` entry point for `uv run`.
 `.claude/commands/cashew.md` — slash command prompt for the `/cashew` dashboard.
+`docs/mcp-experience-roadmap.md` — roadmap for product and MCP experience improvements.
 
 ## Running the server
 
@@ -26,7 +28,7 @@ Override with `CASHEW_DB=/path/to/file.sqlite uv run cashew-mcp`.
 
 ## Adding a new tool
 
-1. Add a `@mcp.tool()` decorated function to `cashew_mcp.py`
+1. Add a `@mcp.tool()` decorated function to `src/cashew_mcp/server.py`
 2. Use `get_conn()` for all DB access
 3. Convert timestamps with `ts_to_date()` / `date_to_ts()`
 4. Test it: `uv run python3 -c "from cashew_mcp import your_function; print(your_function())"`

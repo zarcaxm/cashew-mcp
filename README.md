@@ -133,6 +133,17 @@ These defaults control what counts as day-to-day cash, what is treated as reserv
 
 ---
 
+## Project structure
+
+```text
+src/cashew_mcp/server.py      MCP server and finance query tools
+src/cashew_mcp/__init__.py    Public package exports for direct testing
+.claude/commands/cashew.md    Slash command prompt for Claude Code
+docs/                         Product notes and MCP experience roadmap
+```
+
+---
+
 ## Using the `/cashew` command
 
 | Invocation | What happens |

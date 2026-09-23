@@ -23,6 +23,9 @@ When this command is invoked:
 | `get_subscriptions` | Reviewing subscriptions and recurring payments |
 | `audit_data_quality` | Finding stale unpaid, unbudgeted, unnamed, or uncategorised entries |
 | `get_month_status` | Monthly executive summary with income, expenses, net, and budget/category totals |
+| `evaluate_purchase` | "Can I buy this?" — cash and budget headroom for a planned purchase |
+| `get_spending_range` | Low/base/high spending range for the current month |
+| `suggest_organization` | Budget and category structure review with improvement suggestions |
 
 ## Formatting rules
 - Show amounts with the correct currency symbol (€ for EUR, ₹ for INR, $ for USD, ฿ for THB, ﷼ for OMR)
@@ -32,6 +35,9 @@ When this command is invoked:
 - Treat reserve/owed wallets separately from spendable cash unless the user explicitly asks for total net worth
 - Prefer `forecast_cashflow` for "how much will I have on date X" questions
 - Prefer `get_month_status` when the user asks what is available this month after excluding ignored budgets
+- Prefer `evaluate_purchase` for "can I afford / can I buy this" questions
+- Prefer `get_spending_range` for "how much will I spend this month" or spending range questions
+- Prefer `suggest_organization` when the user asks if budgets or categories make sense
 - Mention that results depend on the freshness of the exported Cashew backup when making forecasts
 
 ## Example queries this command handles
@@ -46,3 +52,6 @@ When this command is invoked:
 - "Search for Zomato transactions"
 - "What's my current balance?"
 - "Am I over budget?"
+- "Can I buy a €200 headset this month?"
+- "What's my spending range this month?"
+- "Do my budgets and categories make sense?"

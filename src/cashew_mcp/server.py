@@ -7,6 +7,7 @@ Database path: ~/Downloads/cashew.sqlite by default.
 Override with the CASHEW_DB environment variable.
 """
 
+import calendar
 import os
 import sqlite3
 from datetime import datetime, timezone
@@ -117,6 +118,39 @@ def add_in_filter(
     if values:
         where.append(f"{expression} IN ({placeholders(values)})")
         params += values
+
+
+def month_range(month: str | None = None) -> dict[str, Any]:
+    """Return calendar bounds and elapsed/remaining days for a YYYY-MM month."""
+    selected = month or today_iso()[:7]
+    start = f"{selected}-01"
+    year = int(selected[:4])
+    month_num = int(selected[5:7])
+    if month_num == 12:
+        next_month = f"{year + 1}-01-01"
+    else:
+        next_month = f"{year}-{month_num + 1:02d}-01"
+    last_day = calendar.monthrange(year, month_num)[1]
+    end = f"{selected}-{last_day:02d}"
+    today = today_iso()
+    if selected == today[:7]:
+        days_elapsed = int(today[8:10])
+        days_remaining = last_day - days_elapsed
+    elif selected < today[:7]:
+        days_elapsed = last_day
+        days_remaining = 0
+    else:
+        days_elapsed = 0
+        days_remaining = last_day
+    return {
+        "month": selected,
+        "start_date": start,
+        "end_date": end,
+        "next_month": next_month,
+        "days_in_month": last_day,
+        "days_elapsed": days_elapsed,
+        "days_remaining": days_remaining,
+    }
 
 
 @mcp.tool()
@@ -1296,6 +1330,489 @@ def get_month_status(
             {"category": r["category"], "total": round(r["total"], 2), "count": r["count"]}
             for r in category_rows
         ],
+    }
+
+
+@mcp.tool()
+def evaluate_purchase(
+    amount: float,
+    budget: str | None = None,
+    category: str | None = None,
+    month: str | None = None,
+    safety_buffer: float = 50.0,
+    average_daily_spend_days: int = 14,
+) -> dict[str, Any]:
+    """
+    Advise whether a planned purchase fits this month's cash and budget headroom.
+
+    Args:
+        amount: Purchase amount as a positive number.
+        budget: Optional Cashew budget name to check remaining limit against.
+        category: Optional category name for context when no budget is given.
+        month: Month to evaluate in YYYY-MM format. Defaults to current month.
+        safety_buffer: Minimum projected cash to keep after the purchase.
+        average_daily_spend_days: Recent paid days used to estimate variable spend
+            through month-end when projecting cash.
+
+    Returns:
+        Verdict (yes, caution, no), cash and budget impact, and a plain summary.
+    """
+    if amount <= 0:
+        return {"verdict": "no", "summary": "Purchase amount must be positive.", "amount": amount}
+
+    period = month_range(month)
+    month_end = period["end_date"]
+    cash = get_available_cash(upcoming_until=month_end)
+    projected_before = cash["projected_available"]
+
+    forecast = forecast_cashflow(
+        target_date=month_end,
+        average_daily_spend_days=average_daily_spend_days,
+    )
+    projected_month_end = forecast["projected_available"]
+    projected_after = round(projected_month_end - amount, 2)
+    immediate_after = round(projected_before - amount, 2)
+
+    budget_impact: dict[str, Any] | None = None
+    budget_blocks = False
+    if budget:
+        matches = [b for b in get_budgets() if b["name"].lower() == budget.lower()]
+        if matches:
+            b = matches[0]
+            remaining_after = round(b["remaining"] - amount, 2)
+            budget_blocks = remaining_after < 0
+            budget_impact = {
+                "budget": b["name"],
+                "limit": b["budget_amount"],
+                "spent": b["spent"],
+                "remaining_before": b["remaining"],
+                "remaining_after": remaining_after,
+                "utilisation_after_pct": round((b["spent"] + amount) / b["budget_amount"] * 100, 1)
+                if b["budget_amount"]
+                else None,
+                "currency": b["currency"],
+            }
+        else:
+            budget_impact = {"budget": budget, "error": "Budget not found"}
+
+    reasons: list[str] = []
+    if projected_after < 0:
+        reasons.append(
+            f"Projected month-end cash would be negative ({projected_after:,.2f}) after the purchase."
+        )
+    elif projected_after < safety_buffer:
+        reasons.append(
+            f"Projected month-end cash ({projected_after:,.2f}) would fall below your "
+            f"{safety_buffer:,.2f} safety buffer."
+        )
+
+    if budget_blocks and budget_impact:
+        reasons.append(
+            f"Would exceed the {budget_impact['budget']} budget by "
+            f"{abs(budget_impact['remaining_after']):,.2f}."
+        )
+
+    if reasons:
+        verdict = "no" if projected_after < 0 or budget_blocks else "caution"
+    else:
+        verdict = "yes"
+
+    if verdict == "yes":
+        summary = (
+            f"Yes — a purchase of {amount:,.2f} looks affordable this month. "
+            f"Projected month-end cash after purchase: {projected_after:,.2f}."
+        )
+    elif verdict == "caution":
+        summary = f"Caution — possible but tight. {' '.join(reasons)}"
+    else:
+        summary = f"No — not recommended. {' '.join(reasons)}"
+
+    return {
+        "verdict": verdict,
+        "summary": summary,
+        "amount": round(amount, 2),
+        "month": period["month"],
+        "category": category,
+        "cash": {
+            "current_available": cash["total_available"],
+            "upcoming_through_month_end": cash["upcoming_total"],
+            "projected_before_purchase": projected_before,
+            "projected_month_end_before_purchase": projected_month_end,
+            "projected_month_end_after_purchase": projected_after,
+            "immediate_after_purchase": immediate_after,
+            "safety_buffer": safety_buffer,
+        },
+        "budget_impact": budget_impact,
+        "reasons": reasons,
+    }
+
+
+@mcp.tool()
+def get_spending_range(
+    month: str | None = None,
+    lookback_days: int = 30,
+    exclude_budgets: list[str] | None = None,
+) -> dict[str, Any]:
+    """
+    Estimate low, base, and high total spending for a calendar month.
+
+    Args:
+        month: Month in YYYY-MM format. Defaults to current month.
+        lookback_days: Recent paid days used to estimate variable daily spend.
+        exclude_budgets: Budget names excluded from variable-spend estimation.
+            Defaults to configured ignored budgets.
+
+    Returns:
+        Spent so far, known upcoming commitments, and projected month-end range.
+    """
+    period = month_range(month)
+    ignored_budgets = exclude_budgets if exclude_budgets is not None else DEFAULT_IGNORED_BUDGETS
+    today = today_iso()
+
+    with get_conn() as conn:
+        spent_where = [
+            "t.paid = 1",
+            "t.income = 0",
+            "t.date_created >= ?",
+            "t.date_created < ?",
+        ]
+        spent_params: list[Any] = [date_to_ts(period["start_date"]), date_to_ts(period["next_month"])]
+        add_exclusion_filter(spent_where, spent_params, "c.name", DEFAULT_CORRECTION_CATEGORIES)
+        spent_row = conn.execute(
+            f"""
+            SELECT COALESCE(SUM(t.amount), 0) AS total
+            FROM transactions t
+            LEFT JOIN categories c ON c.category_pk = t.category_fk
+            WHERE {" AND ".join(spent_where)}
+            """,
+            spent_params,
+        ).fetchone()
+
+        upcoming_from = today if period["month"] == today[:7] else period["start_date"]
+        upcoming_where = [
+            "t.paid = 0",
+            "t.income = 0",
+            "t.date_created >= ?",
+            "t.date_created < ?",
+        ]
+        upcoming_params: list[Any] = [
+            date_to_ts(upcoming_from),
+            date_to_ts(period["next_month"]),
+        ]
+        add_exclusion_filter(upcoming_where, upcoming_params, "c.name", DEFAULT_CORRECTION_CATEGORIES)
+        upcoming_row = conn.execute(
+            f"""
+            SELECT COALESCE(SUM(t.amount), 0) AS total
+            FROM transactions t
+            LEFT JOIN categories c ON c.category_pk = t.category_fk
+            WHERE {" AND ".join(upcoming_where)}
+            """,
+            upcoming_params,
+        ).fetchone()
+
+        wallet_filter = placeholders(DEFAULT_SPENDABLE_WALLETS)
+        var_where = [
+            "t.paid = 1",
+            "t.income = 0",
+            f"w.name IN ({wallet_filter})",
+            "t.date_created >= ?",
+            "t.date_created < ?",
+        ]
+        var_params: list[Any] = [
+            *DEFAULT_SPENDABLE_WALLETS,
+            date_to_ts(today) - lookback_days * 86400,
+            date_to_ts(today) + 86400,
+        ]
+        add_exclusion_filter(var_where, var_params, "c.name", DEFAULT_CORRECTION_CATEGORIES)
+        add_exclusion_filter(var_where, var_params, "b.name", ignored_budgets)
+        daily_rows = conn.execute(
+            f"""
+            SELECT date(t.date_created, 'unixepoch') AS day,
+                   COALESCE(SUM(t.amount), 0) AS total
+            FROM transactions t
+            LEFT JOIN wallets w ON w.wallet_pk = t.wallet_fk
+            LEFT JOIN categories c ON c.category_pk = t.category_fk
+            LEFT JOIN budgets b ON b.budget_pk = t.shared_reference_budget_pk
+            WHERE {" AND ".join(var_where)}
+            GROUP BY day
+            ORDER BY day
+            """,
+            var_params,
+        ).fetchall()
+
+    spent_so_far = round(abs(spent_row["total"] or 0), 2)
+    upcoming_committed = round(abs(upcoming_row["total"] or 0), 2)
+    days_remaining = period["days_remaining"]
+
+    daily_totals = [abs(r["total"]) for r in daily_rows]
+    avg_daily = sum(daily_totals) / lookback_days if lookback_days else 0.0
+    peak_daily = max(daily_totals) if daily_totals else avg_daily
+
+    variable_base = round(avg_daily * days_remaining, 2)
+    variable_high = round(peak_daily * days_remaining, 2)
+
+    low_total = round(spent_so_far + upcoming_committed, 2)
+    base_total = round(spent_so_far + upcoming_committed + variable_base, 2)
+    high_total = round(spent_so_far + upcoming_committed + variable_high, 2)
+
+    return {
+        "month": period["month"],
+        "period": {
+            "start_date": period["start_date"],
+            "end_date": period["end_date"],
+            "days_elapsed": period["days_elapsed"],
+            "days_remaining": days_remaining,
+        },
+        "spent_so_far": spent_so_far,
+        "upcoming_committed": upcoming_committed,
+        "variable_spend_estimate": {
+            "lookback_days": lookback_days,
+            "average_daily": round(avg_daily, 2),
+            "peak_daily": round(peak_daily, 2),
+            "days_remaining": days_remaining,
+            "base_projection": variable_base,
+            "high_projection": variable_high,
+        },
+        "range": {
+            "low": low_total,
+            "base": base_total,
+            "high": high_total,
+        },
+        "summary": (
+            f"Spending this month likely lands between {low_total:,.2f} (committed only) "
+            f"and {high_total:,.2f} (peak daily pace). Base estimate: {base_total:,.2f}."
+        ),
+    }
+
+
+@mcp.tool()
+def suggest_organization(
+    months: int = 3,
+    category_sparsity_threshold: int = 3,
+    max_recommended_categories: int = 20,
+) -> dict[str, Any]:
+    """
+    Analyse budgets and categories and suggest structural improvements.
+
+    Args:
+        months: Number of recent calendar months to analyse.
+        category_sparsity_threshold: Expense categories with fewer transactions
+            than this across the period are flagged as sparse.
+        max_recommended_categories: Flag when active expense categories exceed this count.
+
+    Returns:
+        Budget misalignment findings, category sprawl signals, and actionable suggestions.
+    """
+    months = max(1, min(months, 12))
+    today = today_iso()
+    year = int(today[:4])
+    month_num = int(today[5:7])
+    period_starts: list[str] = []
+    for offset in range(months):
+        m = month_num - offset
+        y = year
+        while m <= 0:
+            m += 12
+            y -= 1
+        period_starts.append(f"{y}-{m:02d}-01")
+    period_start = min(period_starts)
+    period_end = today
+
+    budgets = [b for b in get_budgets() if not b["archived"]]
+    suggestions: list[dict[str, Any]] = []
+
+    with get_conn() as conn:
+        for b in budgets:
+            if b["name"] in DEFAULT_IGNORED_BUDGETS:
+                continue
+            monthly_spend: list[float] = []
+            for start in period_starts:
+                month_info = month_range(start[:7])
+                row = conn.execute(
+                    """
+                    SELECT COALESCE(SUM(t.amount), 0) AS total
+                    FROM transactions t
+                    WHERE t.income = 0 AND t.paid = 1
+                      AND t.shared_reference_budget_pk = ?
+                      AND t.date_created >= ? AND t.date_created < ?
+                    """,
+                    (b["id"], date_to_ts(month_info["start_date"]), date_to_ts(month_info["next_month"])),
+                ).fetchone()
+                monthly_spend.append(abs(row["total"] or 0))
+
+            avg_spend = sum(monthly_spend) / len(monthly_spend) if monthly_spend else 0.0
+            limit = b["budget_amount"]
+            if limit <= 0:
+                continue
+
+            utilisations = [round(s / limit * 100, 1) for s in monthly_spend if limit]
+            avg_util = sum(utilisations) / len(utilisations) if utilisations else 0.0
+
+            if avg_spend == 0:
+                suggestions.append(
+                    {
+                        "type": "budget_unused",
+                        "severity": "info",
+                        "subject": b["name"],
+                        "message": f"Budget '{b['name']}' had no linked spending in the last {months} months.",
+                        "evidence": {"limit": limit, "monthly_spend": monthly_spend},
+                    }
+                )
+            elif avg_util > 110:
+                suggestions.append(
+                    {
+                        "type": "budget_too_low",
+                        "severity": "warning",
+                        "subject": b["name"],
+                        "message": (
+                            f"Budget '{b['name']}' is consistently exceeded "
+                            f"(avg {avg_util:.0f}% of {limit:,.2f}). Consider raising the limit."
+                        ),
+                        "evidence": {"limit": limit, "avg_spend": round(avg_spend, 2), "avg_utilisation_pct": avg_util},
+                    }
+                )
+            elif avg_util < 40 and avg_spend > 0:
+                suggestions.append(
+                    {
+                        "type": "budget_too_high",
+                        "severity": "info",
+                        "subject": b["name"],
+                        "message": (
+                            f"Budget '{b['name']}' is often underused "
+                            f"(avg {avg_util:.0f}% of {limit:,.2f}). Consider lowering or merging it."
+                        ),
+                        "evidence": {"limit": limit, "avg_spend": round(avg_spend, 2), "avg_utilisation_pct": avg_util},
+                    }
+                )
+            elif limit > 0 and (avg_spend > limit * 1.3 or avg_spend < limit * 0.5):
+                suggestions.append(
+                    {
+                        "type": "budget_misaligned",
+                        "severity": "info",
+                        "subject": b["name"],
+                        "message": (
+                            f"Budget '{b['name']}' limit ({limit:,.2f}) diverges from typical spend "
+                            f"({avg_spend:,.2f}). Consider realigning."
+                        ),
+                        "evidence": {"limit": limit, "avg_spend": round(avg_spend, 2)},
+                    }
+                )
+
+        category_rows = conn.execute(
+            """
+            SELECT
+                c.category_pk,
+                c.name,
+                c.main_category_pk,
+                c.income,
+                COUNT(t.transaction_pk) AS tx_count,
+                COALESCE(SUM(CASE WHEN t.income = 0 AND t.paid = 1 THEN t.amount ELSE 0 END), 0) AS expense_total
+            FROM categories c
+            LEFT JOIN transactions t ON t.category_fk = c.category_pk
+                AND t.date_created >= ? AND t.date_created < ?
+            WHERE c.income = 0
+            GROUP BY c.category_pk
+            ORDER BY tx_count ASC, c.name
+            """,
+            [date_to_ts(period_start), date_to_ts(period_end) + 86400],
+        ).fetchall()
+
+        unbudgeted_row = conn.execute(
+            """
+            SELECT COALESCE(SUM(t.amount), 0) AS total, COUNT(*) AS count
+            FROM transactions t
+            LEFT JOIN budgets b ON b.budget_pk = t.shared_reference_budget_pk
+            LEFT JOIN categories c ON c.category_pk = t.category_fk
+            WHERE t.paid = 1 AND t.income = 0
+              AND b.budget_pk IS NULL
+              AND t.date_created >= ? AND t.date_created < ?
+            """,
+            [date_to_ts(period_start), date_to_ts(period_end) + 86400],
+        ).fetchone()
+
+    expense_categories = [dict(r) for r in category_rows]
+    active_categories = [c for c in expense_categories if c["tx_count"] > 0]
+    sparse_categories = [
+        c for c in expense_categories if 0 < c["tx_count"] < category_sparsity_threshold
+    ]
+    empty_categories = [c for c in expense_categories if c["tx_count"] == 0]
+
+    if len(active_categories) > max_recommended_categories:
+        suggestions.append(
+            {
+                "type": "too_many_categories",
+                "severity": "warning",
+                "subject": "categories",
+                "message": (
+                    f"You have {len(active_categories)} active expense categories in the last {months} months. "
+                    f"Consider consolidating toward {max_recommended_categories} or fewer."
+                ),
+                "evidence": {
+                    "active_count": len(active_categories),
+                    "recommended_max": max_recommended_categories,
+                },
+            }
+        )
+
+    for c in sparse_categories[:10]:
+        suggestions.append(
+            {
+                "type": "sparse_category",
+                "severity": "info",
+                "subject": c["name"],
+                "message": (
+                    f"Category '{c['name']}' had only {c['tx_count']} expense(s) "
+                    f"({abs(c['expense_total']):,.2f} total). Consider merging into a parent category."
+                ),
+                "evidence": {"tx_count": c["tx_count"], "expense_total": round(abs(c["expense_total"]), 2)},
+            }
+        )
+
+    if empty_categories:
+        suggestions.append(
+            {
+                "type": "empty_categories",
+                "severity": "info",
+                "subject": "categories",
+                "message": f"{len(empty_categories)} expense categories had no use in the last {months} months.",
+                "evidence": {"count": len(empty_categories), "samples": [c["name"] for c in empty_categories[:8]]},
+            }
+        )
+
+    unbudgeted_total = abs(unbudgeted_row["total"] or 0)
+    if unbudgeted_row["count"] > 0:
+        suggestions.append(
+            {
+                "type": "unbudgeted_spending",
+                "severity": "warning",
+                "subject": "budgets",
+                "message": (
+                    f"{unbudgeted_row['count']} expenses ({unbudgeted_total:,.2f}) were not linked to any budget "
+                    f"in the last {months} months."
+                ),
+                "evidence": {"count": unbudgeted_row["count"], "total": round(unbudgeted_total, 2)},
+            }
+        )
+
+    severity_rank = {"warning": 0, "info": 1}
+    suggestions.sort(key=lambda s: severity_rank.get(s["severity"], 2))
+
+    return {
+        "period": {"start_date": period_start, "end_date": period_end, "months_analysed": months},
+        "counts": {
+            "active_budgets": len(budgets),
+            "expense_categories": len(expense_categories),
+            "active_expense_categories": len(active_categories),
+            "sparse_categories": len(sparse_categories),
+            "empty_categories": len(empty_categories),
+        },
+        "suggestions": suggestions,
+        "summary": (
+            f"Found {len(suggestions)} organisation suggestion(s) across "
+            f"{len(budgets)} budgets and {len(active_categories)} active categories."
+            if suggestions
+            else "Budget and category structure look reasonable for the analysed period."
+        ),
     }
 
 

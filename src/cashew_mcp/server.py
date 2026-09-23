@@ -3,8 +3,9 @@ Cashew budget app MCP server.
 Connects to the local SQLite database and exposes tools for querying
 transactions, spending by category, budgets, and wallet balances.
 
-Database path: ~/Downloads/cashew.sqlite by default.
-Override with the CASHEW_DB environment variable.
+Database path: latest Cashew export in CASHEW_BACKUP_DIR (or ~/Downloads) by default.
+Set CASHEW_DB to a file path or folder. Folder → most recently modified backup.
+Local defaults live in the project .env file (see .env.example).
 """
 
 import calendar
@@ -16,8 +17,33 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-_default_db = Path.home() / "Downloads" / "cashew.sqlite"
-DB_PATH = Path(os.environ.get("CASHEW_DB", str(_default_db)))
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+BACKUP_SUFFIXES = (".sqlite", ".sql", ".db")
+
+
+def load_env_file() -> None:
+    """Load KEY=VALUE pairs from PROJECT_ROOT/.env when not already in os.environ."""
+    env_file = PROJECT_ROOT / ".env"
+    if not env_file.is_file():
+        return
+    for line in env_file.read_text(encoding="utf-8").splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, value = stripped.split("=", 1)
+        key = key.strip()
+        value = value.strip().strip('"').strip("'")
+        os.environ.setdefault(key, value)
+
+
+load_env_file()
+
+
+def default_backup_dir() -> Path:
+    configured = os.environ.get("CASHEW_BACKUP_DIR")
+    if configured:
+        return Path(configured)
+    return Path.home() / "Downloads"
 DEFAULT_SPENDABLE_WALLETS = [
     item.strip()
     for item in os.environ.get("CASHEW_SPENDABLE_WALLETS", "Checkings,Banco").split(",")
@@ -48,10 +74,60 @@ DEFAULT_IGNORED_BUDGETS = [
 mcp = FastMCP("cashew-budget")
 
 
+def is_sqlite_file(path: Path) -> bool:
+    """True when the file has a SQLite binary header (Cashew exports use this)."""
+    try:
+        with path.open("rb") as handle:
+            return handle.read(16).startswith(b"SQLite format 3\x00")
+    except OSError:
+        return False
+
+
+def _latest_backup_in(directory: Path) -> Path:
+    """Return the most recently modified Cashew backup in a directory."""
+    candidates = [
+        path
+        for path in directory.iterdir()
+        if path.is_file()
+        and path.suffix.lower() in BACKUP_SUFFIXES
+        and is_sqlite_file(path)
+    ]
+    if not candidates:
+        suffix_list = ", ".join(BACKUP_SUFFIXES)
+        raise FileNotFoundError(
+            f"No Cashew SQLite backup found in {directory}. "
+            f"Export from the app and save a {suffix_list} file there."
+        )
+    return max(candidates, key=lambda path: path.stat().st_mtime)
+
+
+def resolve_db_path() -> Path:
+    """
+    Resolve the active backup file.
+
+    CASHEW_DB is file   → that exact file
+    CASHEW_DB is folder → latest backup in that folder
+    CASHEW_DB unset     → latest backup in CASHEW_BACKUP_DIR (or ~/Downloads)
+    """
+    configured = os.environ.get("CASHEW_DB")
+    if configured:
+        path = Path(configured)
+        if path.is_dir():
+            return _latest_backup_in(path)
+        return path
+
+    backup_dir = default_backup_dir()
+    if backup_dir.is_dir():
+        return _latest_backup_in(backup_dir)
+
+    return backup_dir / "cashew.sqlite"
+
+
 def get_conn() -> sqlite3.Connection:
     # Open the exported Cashew database read-only. The MCP server is for analysis,
     # not for changing the user's source data.
-    conn = sqlite3.connect(DB_PATH.resolve().as_uri() + "?mode=ro", uri=True)
+    db_path = resolve_db_path()
+    conn = sqlite3.connect(db_path.resolve().as_uri() + "?mode=ro", uri=True)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -1813,6 +1889,51 @@ def suggest_organization(
             if suggestions
             else "Budget and category structure look reasonable for the analysed period."
         ),
+    }
+
+
+@mcp.tool()
+def get_backup_info() -> dict[str, Any]:
+    """
+    Return which Cashew backup file is active and when it was last modified.
+
+    Returns:
+        Resolved file path, filename, modified timestamp, and size in bytes.
+    """
+    try:
+        path = resolve_db_path()
+    except FileNotFoundError as exc:
+        backup_dir = default_backup_dir()
+        return {
+            "backup_dir": str(backup_dir),
+            "path": str(backup_dir),
+            "exists": False,
+            "summary": str(exc),
+        }
+
+    if not path.is_file():
+        backup_dir = default_backup_dir()
+        return {
+            "backup_dir": str(backup_dir),
+            "path": str(path.resolve()),
+            "filename": path.name,
+            "exists": False,
+            "summary": (
+                f"No backup found in {backup_dir}. "
+                "Export from Cashew and save a .sql or .sqlite file there."
+            ),
+        }
+
+    modified = datetime.fromtimestamp(path.stat().st_mtime)
+    backup_dir = default_backup_dir()
+    return {
+        "backup_dir": str(backup_dir.resolve()) if backup_dir.is_dir() else str(path.parent.resolve()),
+        "path": str(path.resolve()),
+        "filename": path.name,
+        "exists": True,
+        "modified_at": modified.isoformat(timespec="seconds"),
+        "size_bytes": path.stat().st_size,
+        "summary": f"Using {path.name} from {backup_dir} (modified {modified.strftime('%Y-%m-%d %H:%M')}).",
     }
 
 

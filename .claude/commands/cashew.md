@@ -15,6 +15,7 @@ When this command is invoked:
 | `get_spending_by_budget` | Totals grouped by Cashew budget for a period |
 | `get_budgets` | Budget limits, spend, and remaining amounts |
 | `get_wallet_balances` | Account balances (all currencies) |
+| `get_backup_info` | Which backup file is active and when it was last modified |
 | `get_available_cash` | Spendable cash across selected wallets |
 | `get_upcoming_transactions` | Future unpaid transactions for forecasting |
 | `search_transactions` | Finding transactions by name or note |

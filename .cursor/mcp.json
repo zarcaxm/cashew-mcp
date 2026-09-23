@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "cashew": {
+      "command": "uv",
+      "args": [
+        "run",
+        "--project",
+        "${workspaceFolder}",
+        "cashew-mcp"
+      ],
+      "env": {
+        "CASHEW_BACKUP_DIR": "D:/Documents/Cashew Backups"
+      }
+    }
+  }
+}
